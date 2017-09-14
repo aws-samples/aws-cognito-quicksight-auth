@@ -7,7 +7,7 @@ A simple JavaScript frontend and SAM template to spin up a serverless backend, f
 
 ## Instructions
 
-Get started by cloning the repository then editing some files described with more detail in steps 1-4:
+Get started by cloning the repository then editing some files described with more detail in steps 3-5:
 
 1. Using the AWS CLI, create an S3 bucket in the same region where you want all resources to be deployed:
 
