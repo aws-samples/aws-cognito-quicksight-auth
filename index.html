@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+	<title>QuickSight via Cognito</title>
+	<meta charset="UTF-8">
+    <link rel="shortcut icon" type="image/png" href="https://a0.awsstatic.com/main/images/site/favicon.ico"/>	
+    <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+	<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.98.2/css/materialize.min.css" media="screen,projection">
+	<link rel="stylesheet" type="text/css" href="style.css">
+	<script src="https://code.jquery.com/jquery-1.11.3.min.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.98.2/js/materialize.min.js"></script>
+	<script src="https://sdk.amazonaws.com/js/aws-sdk-2.96.0.min.js"></script>
+	<script src="auth.js"></script>
+	<script src="aws-cognito-sdk.js"></script>
+	<script src="amazon-cognito-auth.min.js"></script>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+</head>
+
+<body  onload="onLoad()">
+    <nav>
+        <div class="nav-wrapper blue-grey darken-2"> 
+			<a href="https://aws.amazon.com/cognito/" target="_blank" class="hoverable"><img src="https://d2597oqac71veb.cloudfront.net/201406190823/images/cognito-icon.png" alt="Amazon Cognito" title="Amazon Cognito" style="width:75px;height:75px;"></a>
+			<a href="https://quicksight.aws/" target="_blank" class="hoverable"><img src="https://dpeefs3k5hlj8.cloudfront.net/images/quick_sight_default.f52ebfb7e602e4af4b460cbcd1b9d104.7.svg" alt="Amazon QuickSight" title="Amazon QuickSight" style="width:75px;height:75px;"></a>
+        </div>
+    </nav>
+	<br/>
+	<br/>
+	<br/>
+    <div class="container">
+		<div class="row">
+			<div class="col s12 m12 center-align">
+				<h5 id="statusNotAuth" title="Status">
+					Use Cognito User Pools credentials to access QuickSight
+				</h5>
+				<h5 id="statusAuth" title="Status">
+					You have Signed-In! Redirecting...
+				</h5>
+			</div>
+		</div>
+		<div class="row">
+			<div class="col s12 m12 center">
+				<div class="loader center" id="loader"></div>
+				<div id="instructions">
+					<ul>
+						<li>If you are not redirected, access the following temporary link:</li>
+						<div id="consoleLink" class="center-align"></div>
+					</ul> 
+				</div>
+			</div>
+		</div>
+		<p></p>
+		<div class="row">
+			<div class="col s12 m12">
+				<div id="startButtons" class="center-align">
+					<div class="button">
+						<a class="waves-effect waves-light btn-large blue-grey darken-2 z-depth-5" id="signInButton" href="javascript:void(0)" title="Sign in">Sign In / Sign Up</a>
+					</div>
+				</div>
+			</div>
+		</div>
+
+    </div>
+	<script>
+	let thisUrlEncoded = encodeURIComponent("https://"+window.location.hostname);
+	let quicksightUrlEncoded = encodeURIComponent("https://quicksight.aws.amazon.com/");
+	AWS.config.update({
+		region: region,
+		credentials: new AWS.CognitoIdentityCredentials({
+		IdentityPoolId: ''
+		})
+	});
+
+	AWSCognito.config.region = region;
+
+
+	AWSCognito.config.credentials = new AWS.CognitoIdentityCredentials({
+			IdentityPoolId: identityPool 
+	});
+
+	AWSCognito.config.update({accessKeyId: 'null', secretAccessKey: 'null'});
+	// Operations when the web page is loaded.
+	function onLoad() {
+		document.getElementById("statusNotAuth").style.display = 'block';
+		document.getElementById("statusAuth").style.display = 'none';
+		document.getElementById("instructions").style.display = 'none';
+		// Initiatlize CognitoAuth object
+		var auth = initCognitoSDK();
+		document.getElementById("signInButton").addEventListener("click", function() {
+			userButton(auth);
+		});
+		var curUrl = window.location.href;
+		auth.parseCognitoWebResponse(curUrl);
+	}
+
+  // Operations when signed in.
+  function showSignedIn(session) {
+		document.getElementById("statusNotAuth").style.display = 'none';
+		document.getElementById("statusAuth").style.display = 'block';
+		document.getElementById("signInButton").innerHTML = "Sign Out";
+		document.getElementById("loader").style.display = "block";
+	}
+
+  // Perform user operations.
+	function userButton(auth) {
+		var state = document.getElementById('signInButton').innerHTML;
+        var statestr = state.toString();
+		if (statestr.includes("Sign Out")) {
+			document.getElementById("signInButton").innerHTML = "Sign In";
+			auth.signOut();
+			showSignedOut();
+		} else {
+			auth.getSession();
+		}
+	}
+
+  // Initialize a cognito auth object.
+	function initCognitoSDK() {
+		let auth = new AWSCognito.CognitoIdentityServiceProvider.CognitoAuth(authData);
+		auth.userhandler = {
+			onSuccess: function(result) {
+				console.log("Cognito Sign in successful!");
+				showSignedIn(result);
+				let id_token = auth.signInUserSession.idToken.jwtToken;
+				let cognitoParams = {
+					IdentityPoolId: identityPool,
+					Logins: {}
+				};
+				cognitoParams.Logins["cognito-idp."+region+".amazonaws.com/"+poolId] = id_token;
+				AWS.config.credentials = new AWS.CognitoIdentityCredentials(cognitoParams);
+				AWS.config.getCredentials(function(){
+					let req = new XMLHttpRequest();
+					let creds = {
+						"sessionId":AWS.config.credentials.accessKeyId,
+						"sessionKey":AWS.config.credentials.secretAccessKey,
+						"sessionToken":AWS.config.credentials.sessionToken
+					}
+					let credsEncoded = encodeURIComponent(JSON.stringify(creds));
+					let uri = "https://signin.aws.amazon.com/federation?Action=getSigninToken&SessionDuration=43200&Session="+credsEncoded;
+					$.ajax({
+						type : 'POST',
+						url : endpoint,
+						headers : {
+							Authorization : id_token
+						},
+						data : uri,
+						success : function(response) {
+							let quickSightSSO = "https://signin.aws.amazon.com/federation?Action=login&Issuer="+thisUrlEncoded+"&Destination="+quicksightUrlEncoded+"&SigninToken="+response.SigninToken
+							console.log("Federated Sign In Token: "+response.SigninToken);
+							console.log("AWS Console Sign In URL: "+quickSightSSO);
+							window.location = quickSightSSO;
+							document.getElementById("consoleLink").innerHTML = "<a href='"+quickSightSSO+"'>"+"https://quicksight.aws.amazon.com"+"</a>";
+							document.getElementById("loader").style.display = "none";
+							document.getElementById("instructions").style.display = 'block';
+						},
+						error : function(xhr, status, error) {
+							var err = eval(xhr.responseText);
+							console.log(JSON.stringify(xhr)); 
+							if(xhr.status == "0"){
+								document.getElementById("statusAuth").innerHTML = "<h5>Token Expired or Invalid! Signing Out...</h5>"
+								auth.signOut();
+							}                  
+						}
+					});
+					
+				});
+			},
+			onFailure: function(err) {
+				console.log("Error!" + err);
+				document.getElementById("statusAuth").innerHTML = "<h5>Token Expired or Invalid! Signing Out...</h5>"
+				auth.signOut();
+			}
+		};
+		// The default response_type is "token", uncomment the next line will make it be "code".
+		// auth.useCodeGrantFlow();
+		return auth;
+	}
+	</script>
+</body>
+</html>

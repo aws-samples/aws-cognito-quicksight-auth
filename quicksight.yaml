@@ -1,0 +1,235 @@
+#aws cloudformation package --template-file quicksight.yaml --output-template-file quicksight-output.yaml --s3-bucket <bucket>
+#aws cloudformation deploy --template-file /<path>/quicksight-output.yaml --stack-name CognitoQuickSight --capabilities CAPABILITY_IAM
+#aws cloudformation describe-stacks --query 'Stacks[0].[Outputs[].[OutputKey,OutputValue]]|[]' --output text --stack-name CognitoQuickSight
+#Add outputs from the last command 
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Federate access from Cognito user Pools to QuickSight
+Resources:
+  CognitoUserPool:
+    Type: "AWS::Cognito::UserPool"
+    Properties:
+      UserPoolName: QuickSightUsers
+      AutoVerifiedAttributes:
+        - "email"
+      Schema:
+        - AttributeDataType: "String"
+          Name: email
+          Required: True
+  CognitoUserPoolClient:    
+    Type: "AWS::Cognito::UserPoolClient"
+    Properties:
+        ClientName: QuickSight
+        GenerateSecret: false
+        UserPoolId: !Ref CognitoUserPool
+        WriteAttributes:
+          - "email"
+  CognitoIdPool:
+    Type: "AWS::Cognito::IdentityPool"
+    Properties:
+      IdentityPoolName: !Ref AWS::StackName
+      CognitoIdentityProviders: 
+        -
+          ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+      AllowUnauthenticatedIdentities: false
+  QuickSightApi:
+    Type: AWS::Serverless::Api
+    Properties:
+        StageName: prod
+        DefinitionBody:
+          swagger: "2.0"
+          info:
+            version: "2017-08-17T22:53:59Z"
+            title: "QuickSight"
+          basePath: "/prod"
+          schemes:
+          - "https"
+          paths:
+            /:
+              post:
+                produces:
+                - "application/json"
+                responses:
+                  "200":
+                    description: "200 response"
+                    schema:
+                      $ref: "#/definitions/Empty"
+                    headers:
+                      Access-Control-Allow-Origin:
+                        type: "string"
+                security:
+                - QuickSight: []
+                x-amazon-apigateway-integration:
+                  responses:
+                    default:
+                      statusCode: "200"
+                      responseParameters:
+                        method.response.header.Access-Control-Allow-Origin: "'*'"
+                  uri: 
+                    Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QuickSightFederationFunction.Arn}/invocations
+                  passthroughBehavior: "when_no_match"
+                  httpMethod: "POST"
+                  contentHandling: "CONVERT_TO_TEXT"
+                  type: "aws_proxy"
+              options:
+                consumes:
+                - "application/json"
+                produces:
+                - "application/json"
+                responses:
+                  "200":
+                    description: "200 response"
+                    schema:
+                      $ref: "#/definitions/Empty"
+                    headers:
+                      Access-Control-Allow-Origin:
+                        type: "string"
+                      Access-Control-Allow-Methods:
+                        type: "string"
+                      Access-Control-Allow-Headers:
+                        type: "string"
+                x-amazon-apigateway-integration:
+                  responses:
+                    default:
+                      statusCode: "200"
+                      responseParameters:
+                        method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+                        method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                        method.response.header.Access-Control-Allow-Origin: "'*'"
+                  requestTemplates:
+                    application/json: "{\"statusCode\": 200}"
+                  passthroughBehavior: "when_no_match"
+                  type: "mock"
+          securityDefinitions:
+            QuickSight:
+              type: "apiKey"
+              name: "Authorization"
+              in: "header"
+              x-amazon-apigateway-authtype: "cognito_user_pools"
+              x-amazon-apigateway-authorizer:
+                providerARNs:
+                - Fn::Sub: ${CognitoUserPool.Arn}
+                type: "cognito_user_pools"
+          definitions:
+            Empty:
+              type: "object"
+              title: "Empty Schema"      
+  QuickSightFederationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: nodejs6.10
+      CodeUri: ./lambda.zip
+      Policies: AWSLambdaBasicExecutionRole
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            Path: /
+            Method: POST
+            RestApiId: 
+                Ref: QuickSightApi
+  AuthRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Federated: 
+                - "cognito-identity.amazonaws.com"
+            Action: 
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: 
+                - !Ref CognitoIdPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr:
+                - "authenticated"
+      Path: "/"
+      Policies: 
+        - 
+          PolicyName: "QuickSightCreateUser"
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - 
+                Effect: "Allow"
+                Action: "quicksight:CreateUser"
+                Resource: "*"
+  AuthRoleAttach:
+    Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+    Properties:
+      IdentityPoolId: !Ref CognitoIdPool
+      Roles: 
+        authenticated: !GetAtt AuthRole.Arn
+  S3WebSite:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+  CloudFrontDistro:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Origins:
+        - DomainName: !Join [ ".", [ !Ref S3WebSite, !Join [ "-", [ "s3", "website", !Ref 'AWS::Region' ] ], "amazonaws.com" ] ]
+          Id: S3WebSite
+          CustomOriginConfig:
+            HTTPPort: '80'
+            HTTPSPort: '443'
+            OriginProtocolPolicy: http-only
+        Enabled: 'true'
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebSite
+          ForwardedValues:
+            QueryString: 'false'
+            Cookies:
+              Forward: none
+          DefaultTTL: 0
+          MaxTTL: 0
+          MinTTL: 0
+          ViewerProtocolPolicy: redirect-to-https
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: 'true'
+Outputs:
+  ApiUrl:
+    Description: <API endpoint URL>
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref QuickSightApi
+        - '.execute-api.'
+        - !Ref 'AWS::Region'
+        - '.amazonaws.com/prod'
+  RestApiId:
+    Description: <API Gateway API ID>
+    Value: !Ref QuickSightApi      
+  LamdbaFunction:
+    Description: <Lambda Function>
+    Value: !Ref QuickSightFederationFunction
+  CognitoIdentityPool:
+    Description: <Cognito Identity Pool>
+    Value: !Ref CognitoIdPool
+  CognitoUserPool:
+    Description: <Cognito User Pool>
+    Value: !Ref CognitoUserPool
+  CognitoUserPoolClient:
+    Description: <Cognito User Pool App>
+    Value: !Ref CognitoUserPoolClient
+  CognitoIdentityAuthRole:
+    Description: <Cognito Identity IAM Auth Role>
+    Value: !Ref AuthRole
+  S3Website:
+    Description: <S3 WebSite URL>
+    Value: !GetAtt S3WebSite.WebsiteURL
+  CloudFrontDistro:
+    Description: <CloudFront Distribution URL>
+    Value: !GetAtt CloudFrontDistro.DomainName
