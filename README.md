@@ -1,5 +1,10 @@
 # aws-cognito-quicksight-auth
-A simple JavaScript frontend and SAM template to spin up a serverless backend, federating Cognito User Pools users to QuickSight
+A simple JavaScript frontend and SAM template to spin up a serverless backend, federating Cognito User Pools users to QuickSight as part of the blog post: https://aws.amazon.com/blogs/big-data/using-amazon-quicksight-federated-single-sign-on-with-amazon-cognito-user-pools/
+
+<p align="center">
+  <img src="https://d2908q01vomqb2.cloudfront.net/b6692ea5df920cad691c20319a6fffd7a4a766b8/2017/10/03/quicksight-federated-1.jpg"  />
+</p>
+
 
 ### Required Tools
 
