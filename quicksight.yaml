@@ -179,7 +179,7 @@ Resources:
     Properties:
       DistributionConfig:
         Origins:
-        - DomainName: !Join [ ".", [ !Ref S3WebSite, !Join [ "-", [ "s3", "website", !Ref 'AWS::Region' ] ], "amazonaws.com" ] ]
+        - DomainName: !Join [ ".", [ !Ref S3WebSite, "s3-website" , !Ref 'AWS::Region', "amazonaws.com" ] ]
           Id: S3WebSite
           CustomOriginConfig:
             HTTPPort: '80'
